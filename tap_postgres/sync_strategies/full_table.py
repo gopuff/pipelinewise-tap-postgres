@@ -125,12 +125,29 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
 
                 fq_table_name = post_db.fully_qualified_table_name(schema_name, stream['table_name'])
                 xmin = singer.get_bookmark(state, stream['tap_stream_id'], 'xmin')
+                fast_sync = conn_info.get('fast_sync', False)
+                
+                # Log table diagnostics if enabled
+                if conn_info.get('diagnostic_mode'):
+                    cur.execute(f"SELECT pg_size_pretty(pg_total_relation_size('{fq_table_name}'))")
+                    table_size = cur.fetchone()[0]
+                    cur.execute(f"SELECT reltuples::bigint FROM pg_class WHERE oid = '{fq_table_name}'::regclass")
+                    est_rows = cur.fetchone()[0]
+                    LOGGER.info("Table %s - estimated size: %s, estimated rows: %s", 
+                               fq_table_name, table_size, est_rows)
+                
                 if xmin:
                     LOGGER.info("Resuming Full Table replication %s from xmin %s", nascent_stream_version, xmin)
                     select_sql = f"""
                         SELECT {','.join(escaped_columns)}, xmin::text::bigint
                         FROM {fq_table_name} where age(xmin::xid) <= age('{xmin}'::xid)
                         ORDER BY xmin::text ASC"""
+                elif fast_sync:
+                    # Fast sync mode: skip ORDER BY for much faster initial sync
+                    # Trade-off: sync is not resumable if interrupted
+                    LOGGER.info("Beginning FAST Full Table replication %s (no ORDER BY)", nascent_stream_version)
+                    select_sql = f"""SELECT {','.join(escaped_columns)}, xmin::text::bigint
+                                      FROM {fq_table_name}"""
                 else:
                     LOGGER.info("Beginning new Full Table replication %s", nascent_stream_version)
                     select_sql = f"""SELECT {','.join(escaped_columns)}, xmin::text::bigint
@@ -138,9 +155,12 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
                                      ORDER BY xmin::text ASC"""
 
                 LOGGER.info("select %s with itersize %s", select_sql, cur.itersize)
+                query_start = time.time()
                 cur.execute(select_sql)
+                LOGGER.info("Query executed in %.2f seconds, starting fetch...", time.time() - query_start)
 
                 rows_saved = 0
+                fetch_batch_start = time.time()
                 for rec in cur:
                     xmin = rec['xmin']
                     rec = rec[:-1]
@@ -155,6 +175,14 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
                     rows_saved += 1
                     if rows_saved % UPDATE_BOOKMARK_PERIOD == 0:
                         singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
+
+                    # Log fetch performance every itersize rows (batch boundary)
+                    if rows_saved % cur.itersize == 0:
+                        batch_time = time.time() - fetch_batch_start
+                        rows_per_sec = cur.itersize / batch_time if batch_time > 0 else 0
+                        LOGGER.info("Fetched %d rows total (batch of %d in %.2f sec, %.0f rows/sec)",
+                                    rows_saved, cur.itersize, batch_time, rows_per_sec)
+                        fetch_batch_start = time.time()
 
                     counter.increment()
 
