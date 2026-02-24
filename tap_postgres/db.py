@@ -44,7 +44,12 @@ def open_connection(conn_config, logical_replication=False, prioritize_primary=F
         'user': conn_config['user'],
         'password': conn_config['password'],
         'port': conn_config['port'],
-        'connect_timeout': 30
+        'connect_timeout': 30,
+        # TCP keepalive to prevent idle connection drops by NAT gateways / load balancers
+        'keepalives': 1,
+        'keepalives_idle': conn_config.get('keepalive_idle', 60),
+        'keepalives_interval': conn_config.get('keepalive_interval', 15),
+        'keepalives_count': conn_config.get('keepalive_count', 4),
     }
 
     if conn_config['use_secondary'] and not prioritize_primary and not logical_replication:
