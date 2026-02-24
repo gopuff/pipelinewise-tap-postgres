@@ -419,6 +419,12 @@ def main_impl():
         'diagnostic_mode': args.config.get('diagnostic_mode', False),  # Enable extra performance diagnostics
         'poll_interval': int(args.config.get('poll_interval', 5)),  # Replication poll interval in seconds (MeltanoLabs uses 5)
         'replication_slot_name': args.config.get('replication_slot_name'),  # Custom replication slot name (optional)
+
+        # TCP keepalive settings to prevent SSL connection drops from idle timeouts
+        # These are passed through to libpq via psycopg2.connect()
+        'keepalive_idle': int(args.config.get('keepalive_idle', 60)),  # seconds before first probe
+        'keepalive_interval': int(args.config.get('keepalive_interval', 15)),  # seconds between probes
+        'keepalive_count': int(args.config.get('keepalive_count', 4)),  # probes before connection is dead
     }
 
     if conn_config['use_secondary']:
