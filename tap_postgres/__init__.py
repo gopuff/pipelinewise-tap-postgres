@@ -413,7 +413,12 @@ def main_impl():
         'break_at_end_lsn': args.config.get('break_at_end_lsn', True),
         'logical_poll_total_seconds': float(args.config.get('logical_poll_total_seconds', 0)),
         'use_secondary': args.config.get('use_secondary', False),
-        'limit': int(limit) if limit else None
+        'limit': int(limit) if limit else None,
+        'work_mem': args.config.get('work_mem'),  # e.g., '256MB' for large table syncs
+        'fast_sync': args.config.get('fast_sync', False),  # Skip ORDER BY for faster initial sync
+        'diagnostic_mode': args.config.get('diagnostic_mode', False),  # Enable extra performance diagnostics
+        'poll_interval': int(args.config.get('poll_interval', 5)),  # Replication poll interval in seconds (MeltanoLabs uses 5)
+        'replication_slot_name': args.config.get('replication_slot_name'),  # Custom replication slot name (optional)
     }
 
     if conn_config['use_secondary']:

@@ -136,73 +136,175 @@ def create_hstore_elem_query(elem):
     return sql.SQL("SELECT hstore_to_array({})").format(sql.Literal(elem))
 
 
+_cached_conn = None
+_cached_conn_info = None
+
+
+def _get_cached_connection(conn_info):
+    """Get or create a cached connection for array/hstore element processing.
+    
+    This avoids opening a new connection for every single element, which was
+    causing massive connection spikes in production PostgreSQL instances.
+    """
+    global _cached_conn, _cached_conn_info
+    
+    conn_key = (conn_info.get('host'), conn_info.get('port'), conn_info.get('dbname'))
+    cached_key = (_cached_conn_info.get('host'), _cached_conn_info.get('port'), _cached_conn_info.get('dbname')) if _cached_conn_info else None
+    
+    if _cached_conn is None or _cached_conn.closed or conn_key != cached_key:
+        if _cached_conn is not None and not _cached_conn.closed:
+            try:
+                _cached_conn.close()
+            except Exception:
+                pass
+        _cached_conn = post_db.open_connection(conn_info, False, True)
+        _cached_conn_info = conn_info
+        LOGGER.debug('Created new cached connection for element processing')
+    
+    return _cached_conn
+
+
+def close_cached_connection():
+    """Close the cached connection when done with logical replication."""
+    global _cached_conn, _cached_conn_info
+    if _cached_conn is not None and not _cached_conn.closed:
+        try:
+            _cached_conn.close()
+            LOGGER.debug('Closed cached connection')
+        except Exception:
+            pass
+    _cached_conn = None
+    _cached_conn_info = None
+
+
 def create_hstore_elem(conn_info, elem):
-    with post_db.open_connection(conn_info, False, True) as conn:
-        with conn.cursor() as cur:
-            query = create_hstore_elem_query(elem)
-            cur.execute(query)
-            res = cur.fetchone()[0]
-            hstore_elem = reduce(tuples_to_map, [res[i:i + 2] for i in range(0, len(res), 2)], {})
-            return hstore_elem
+    conn = _get_cached_connection(conn_info)
+    with conn.cursor() as cur:
+        query = create_hstore_elem_query(elem)
+        cur.execute(query)
+        res = cur.fetchone()[0]
+        hstore_elem = reduce(tuples_to_map, [res[i:i + 2] for i in range(0, len(res), 2)], {})
+        return hstore_elem
+
+
+def _parse_array_with_psycopg2(elem, cursor):
+    """Parse PostgreSQL array using psycopg2's built-in array parser.
+    
+    This is the same approach used by MeltanoLabs tap-postgres.
+    Uses psycopg2.extensions.STRINGARRAY which is optimized for this purpose.
+    """
+    if elem is None:
+        return None
+    
+    if not isinstance(elem, str):
+        return elem
+    
+    try:
+        # Use psycopg2's built-in array parser - no SQL needed
+        return psycopg2.extensions.STRINGARRAY(elem, cursor)
+    except Exception:
+        # Fallback to manual parsing if psycopg2 fails
+        return _parse_postgres_array_string_fallback(elem)
+
+
+def _parse_postgres_array_string_fallback(elem):
+    """Fallback array parser when psycopg2 parser fails.
+    
+    PostgreSQL arrays come as strings like: {val1,val2,val3} or {"val with spaces","val2"}
+    """
+    if not elem or not isinstance(elem, str):
+        return elem
+    
+    elem = elem.strip()
+    if not elem.startswith('{') or not elem.endswith('}'):
+        return [elem] if elem else []
+    
+    inner = elem[1:-1]
+    if not inner:
+        return []
+    
+    if '"' not in inner and '{' not in inner:
+        return inner.split(',')
+    
+    result = []
+    current = []
+    in_quotes = False
+    i = 0
+    while i < len(inner):
+        char = inner[i]
+        if char == '"' and (i == 0 or inner[i-1] != '\\'):
+            in_quotes = not in_quotes
+        elif char == ',' and not in_quotes:
+            val = ''.join(current).strip()
+            if val.startswith('"') and val.endswith('"'):
+                val = val[1:-1]
+            result.append(val)
+            current = []
+        else:
+            current.append(char)
+        i += 1
+    
+    if current:
+        val = ''.join(current).strip()
+        if val.startswith('"') and val.endswith('"'):
+            val = val[1:-1]
+        result.append(val)
+    
+    return result
+
+
+# Types that can be parsed with psycopg2's STRINGARRAY without database call
+_SIMPLE_ARRAY_TYPES = {
+    'text[]', 'character varying[]', 'varchar[]', 'citext[]',
+    'integer[]', 'smallint[]', 'bigint[]',
+    'real[]', 'double precision[]', 'numeric[]',
+    'boolean[]', 'bit[]',
+    'uuid[]', 'date[]',
+    'time without time zone[]', 'time with time zone[]',
+    'timestamp without time zone[]', 'timestamp with time zone[]',
+}
 
 
 def create_array_elem(elem, sql_datatype, conn_info):
+    """Parse PostgreSQL array element.
+    
+    Uses psycopg2's built-in STRINGARRAY parser (same as MeltanoLabs tap-postgres).
+    For complex types (hstore, json, etc.), falls back to database casting.
+    """
     if elem is None:
         return None
-
-    with post_db.open_connection(conn_info, False, True) as conn:
+    
+    # Fast path: use psycopg2's built-in parser for simple types
+    # This is the same approach used by MeltanoLabs tap-postgres
+    if sql_datatype in _SIMPLE_ARRAY_TYPES:
+        conn = _get_cached_connection(conn_info)
         with conn.cursor() as cur:
-            if sql_datatype == 'bit[]':
-                cast_datatype = 'boolean[]'
-            elif sql_datatype == 'boolean[]':
-                cast_datatype = 'boolean[]'
-            elif sql_datatype == 'character varying[]':
-                cast_datatype = 'character varying[]'
-            elif sql_datatype == 'cidr[]':
-                cast_datatype = 'cidr[]'
-            elif sql_datatype == 'citext[]':
-                cast_datatype = 'text[]'
-            elif sql_datatype == 'date[]':
-                cast_datatype = 'text[]'
-            elif sql_datatype == 'double precision[]':
-                cast_datatype = 'double precision[]'
-            elif sql_datatype == 'hstore[]':
-                cast_datatype = 'text[]'
-            elif sql_datatype == 'integer[]':
-                cast_datatype = 'integer[]'
-            elif sql_datatype == 'inet[]':
-                cast_datatype = 'inet[]'
-            elif sql_datatype == 'json[]':
-                cast_datatype = 'text[]'
-            elif sql_datatype == 'jsonb[]':
-                cast_datatype = 'text[]'
-            elif sql_datatype == 'macaddr[]':
-                cast_datatype = 'macaddr[]'
-            elif sql_datatype == 'money[]':
-                cast_datatype = 'text[]'
-            elif sql_datatype == 'numeric[]':
-                cast_datatype = 'text[]'
-            elif sql_datatype == 'real[]':
-                cast_datatype = 'real[]'
-            elif sql_datatype == 'smallint[]':
-                cast_datatype = 'smallint[]'
-            elif sql_datatype == 'text[]':
-                cast_datatype = 'text[]'
-            elif sql_datatype in ('time without time zone[]', 'time with time zone[]'):
-                cast_datatype = 'text[]'
-            elif sql_datatype in ('timestamp with time zone[]', 'timestamp without time zone[]'):
-                cast_datatype = 'text[]'
-            elif sql_datatype == 'uuid[]':
-                cast_datatype = 'text[]'
+            return _parse_array_with_psycopg2(elem, cur)
+    
+    # Slow path: use database casting for complex types (hstore[], json[], etc.)
+    conn = _get_cached_connection(conn_info)
+    with conn.cursor() as cur:
+        if sql_datatype == 'hstore[]':
+            cast_datatype = 'text[]'
+        elif sql_datatype == 'json[]':
+            cast_datatype = 'text[]'
+        elif sql_datatype == 'jsonb[]':
+            cast_datatype = 'text[]'
+        elif sql_datatype == 'cidr[]':
+            cast_datatype = 'cidr[]'
+        elif sql_datatype == 'inet[]':
+            cast_datatype = 'inet[]'
+        elif sql_datatype == 'macaddr[]':
+            cast_datatype = 'macaddr[]'
+        elif sql_datatype == 'money[]':
+            cast_datatype = 'text[]'
+        else:
+            cast_datatype = 'text[]'
 
-            else:
-                # custom datatypes like enums
-                cast_datatype = 'text[]'
-
-            sql_stmt = f"""SELECT $stitch_quote${elem}$stitch_quote$::{cast_datatype}"""
-            cur.execute(sql_stmt)
-            res = cur.fetchone()[0]
-            return res
+        sql_stmt = f"""SELECT $stitch_quote${elem}$stitch_quote$::{cast_datatype}"""
+        cur.execute(sql_stmt)
+        res = cur.fetchone()[0]
+        return res
 
 
 # pylint: disable=too-many-branches,too-many-nested-blocks,too-many-return-statements
@@ -515,7 +617,15 @@ def generate_replication_slot_name(dbname, tap_id=None, prefix='pipelinewise'):
     return re.sub('[^a-z0-9_]', '_', slot_name)
 
 
-def locate_replication_slot_by_cur(cursor, dbname, tap_id=None):
+def locate_replication_slot_by_cur(cursor, dbname, tap_id=None, custom_slot_name=None):
+    # If custom slot name is provided, use it directly (like MeltanoLabs tap-postgres)
+    if custom_slot_name:
+        cursor.execute(f"SELECT * FROM pg_replication_slots WHERE slot_name = '{custom_slot_name}'")
+        if len(cursor.fetchall()) == 1:
+            LOGGER.info('Using custom pg_replication_slot %s', custom_slot_name)
+            return custom_slot_name
+        raise ReplicationSlotNotFoundError(f'Custom replication slot {custom_slot_name} not found')
+    
     slot_name_v15 = generate_replication_slot_name(dbname)
     slot_name_v16 = generate_replication_slot_name(dbname, tap_id)
 
@@ -537,7 +647,12 @@ def locate_replication_slot_by_cur(cursor, dbname, tap_id=None):
 def locate_replication_slot(conn_info):
     with post_db.open_connection(conn_info, False, True) as conn:
         with conn.cursor() as cur:
-            return locate_replication_slot_by_cur(cur, conn_info['dbname'], conn_info['tap_id'])
+            return locate_replication_slot_by_cur(
+                cur, 
+                conn_info['dbname'], 
+                conn_info.get('tap_id'),
+                conn_info.get('replication_slot_name')  # Custom slot name support
+            )
 
 
 # pylint: disable=anomalous-backslash-in-string
@@ -584,7 +699,14 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
     max_run_seconds = conn_info['max_run_seconds']
     break_at_end_lsn = conn_info['break_at_end_lsn']
     logical_poll_total_seconds = conn_info['logical_poll_total_seconds'] or 10800  # 3 hours
-    poll_interval = 10
+    poll_interval = conn_info.get('poll_interval', 10)  # Configurable poll interval
+    
+    # Performance metrics
+    messages_processed = 0
+    messages_per_stream = {}
+    metrics_start_time = datetime.datetime.utcnow()
+    last_metrics_log_time = metrics_start_time
+    metrics_log_interval = 60  # Log metrics every 60 seconds
 
     for s in logical_streams:
         sync_common.send_schema_message(s, ['lsn'])
@@ -606,6 +728,13 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
                     int_to_lsn(start_lsn),
                     int_to_lsn(end_lsn),
                     slot)
+        
+        # Pre-flush LSN from previous sync (like MeltanoLabs tap-postgres)
+        # This ensures we don't re-process messages that were already committed
+        if start_lsn > 0:
+            LOGGER.info('Pre-flushing LSN %s from previous sync', int_to_lsn(start_lsn))
+            cur.send_feedback(flush_lsn=start_lsn)
+        
         # psycopg2 2.8.4 will send a keep-alive message to postgres every status_interval
         cur.start_replication(slot_name=slot,
                               decode=True,
@@ -653,6 +782,25 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
                     break
 
                 state = consume_message(logical_streams, state, msg, time_extracted, conn_info)
+                
+                # Track metrics
+                messages_processed += 1
+                try:
+                    payload = json.loads(msg.payload)
+                    stream_id = post_db.compute_tap_stream_id(payload.get('schema', ''), payload.get('table', ''))
+                    messages_per_stream[stream_id] = messages_per_stream.get(stream_id, 0) + 1
+                except Exception:
+                    pass
+                
+                # Log metrics periodically
+                now = datetime.datetime.utcnow()
+                if (now - last_metrics_log_time).total_seconds() >= metrics_log_interval:
+                    elapsed = (now - metrics_start_time).total_seconds()
+                    rate = messages_processed / elapsed if elapsed > 0 else 0
+                    LOGGER.info('Replication metrics: %d messages processed (%.1f msg/sec), streams: %s',
+                               messages_processed, rate, 
+                               {k: v for k, v in sorted(messages_per_stream.items(), key=lambda x: -x[1])[:5]})
+                    last_metrics_log_time = now
 
                 # When using wal2json with write-in-chunks, multiple messages can have the same lsn
                 # This is to ensure we only flush to lsn that has completed entirely
@@ -735,5 +883,16 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
             LOGGER.info(f"Final state: {state}")
 
         singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
+        
+        # Log final metrics
+        total_elapsed = (datetime.datetime.utcnow() - metrics_start_time).total_seconds()
+        final_rate = messages_processed / total_elapsed if total_elapsed > 0 else 0
+        LOGGER.info('Replication completed: %d messages in %.1f seconds (%.1f msg/sec)',
+                   messages_processed, total_elapsed, final_rate)
+        if messages_per_stream:
+            LOGGER.info('Messages per stream: %s', dict(sorted(messages_per_stream.items(), key=lambda x: -x[1])))
+        
+        # Close cached connection used for array/hstore element processing
+        close_cached_connection()
 
     return state
