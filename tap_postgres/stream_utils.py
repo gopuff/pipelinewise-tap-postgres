@@ -56,26 +56,45 @@ def clear_state_on_replication_change(state: Dict,
     return state
 
 
+_schema_refresh_cache = {}
+
+
 def refresh_streams_schema(conn_config: Dict, streams: List[Dict]):
     """
     Updates the streams schema & metadata with new discovery
     The given streams list of dictionaries would be mutated and updated
+    
+    Optimized to:
+    - Cache schema refreshes to avoid redundant discovery calls
+    - Only refresh schemas that haven't been refreshed recently
     """
-    LOGGER.debug('Refreshing streams schemas ...')
-
-    LOGGER.debug('Current streams schemas %s', streams)
+    # Check which streams actually need refresh (not in cache)
+    streams_to_refresh = []
+    for stream in streams:
+        cache_key = (conn_config.get('host'), conn_config.get('dbname'), stream['tap_stream_id'])
+        if cache_key not in _schema_refresh_cache:
+            streams_to_refresh.append(stream)
+    
+    if not streams_to_refresh:
+        LOGGER.debug('All stream schemas already refreshed, skipping discovery')
+        return
+    
+    LOGGER.debug('Refreshing schemas for %d streams...', len(streams_to_refresh))
 
     # Run discovery to get the streams most up to date json schemas
     with open_connection(conn_config) as conn:
         new_discovery = {
             stream['tap_stream_id']: stream
-            for stream in discover_db(conn, conn_config.get('filter_schemas'), [st['table_name'] for st in streams])
+            for stream in discover_db(conn, conn_config.get('filter_schemas'), [st['table_name'] for st in streams_to_refresh])
         }
 
-        LOGGER.debug('New discovery schemas %s', new_discovery)
+        LOGGER.debug('Discovered schemas for %d streams', len(new_discovery))
 
         # For every stream dictionary, update the schema and metadata from the new discovery
         for idx, stream in enumerate(streams):
+            if stream['tap_stream_id'] not in new_discovery:
+                continue
+                
             # update schema
             streams[idx]['schema'] = copy.deepcopy(new_discovery[stream['tap_stream_id']]['schema'])
 
@@ -93,8 +112,12 @@ def refresh_streams_schema(conn_config: Dict, streams: List[Dict]):
 
             # 2nd step: now copy all the metadata from the updated new discovery to the original stream
             streams[idx]['metadata'] = copy.deepcopy(new_discovery[stream['tap_stream_id']]['metadata'])
+            
+            # Cache the refresh
+            cache_key = (conn_config.get('host'), conn_config.get('dbname'), stream['tap_stream_id'])
+            _schema_refresh_cache[cache_key] = True
 
-    LOGGER.debug('Updated streams schemas %s', streams)
+    LOGGER.debug('Updated schemas for %d streams', len(new_discovery))
 
 
 def any_logical_streams(streams, default_replication_method):

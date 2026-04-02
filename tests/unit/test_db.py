@@ -221,3 +221,45 @@ class TestDbFunctions(unittest.TestCase):
         actual_output = db.filter_schemas_sql_clause(sql, filter_schemas)
         self.assertEqual(expected_output, actual_output)
 
+    def test_open_connection_includes_keepalive_defaults(self):
+        """Test that open_connection passes TCP keepalive params to psycopg2"""
+        import unittest.mock as mock
+        conn_config = {
+            'host': 'localhost',
+            'dbname': 'testdb',
+            'user': 'testuser',
+            'password': 'testpass',
+            'port': '5432',
+            'use_secondary': False,
+        }
+        with mock.patch('tap_postgres.db.psycopg2.connect') as mock_connect:
+            mock_connect.return_value = mock.MagicMock()
+            db.open_connection(conn_config)
+            call_kwargs = mock_connect.call_args[1]
+            self.assertEqual(call_kwargs['keepalives'], 1)
+            self.assertEqual(call_kwargs['keepalives_idle'], 60)
+            self.assertEqual(call_kwargs['keepalives_interval'], 15)
+            self.assertEqual(call_kwargs['keepalives_count'], 4)
+
+    def test_open_connection_uses_custom_keepalive_values(self):
+        """Test that custom keepalive values from config are passed through"""
+        import unittest.mock as mock
+        conn_config = {
+            'host': 'localhost',
+            'dbname': 'testdb',
+            'user': 'testuser',
+            'password': 'testpass',
+            'port': '5432',
+            'use_secondary': False,
+            'keepalive_idle': 120,
+            'keepalive_interval': 30,
+            'keepalive_count': 8,
+        }
+        with mock.patch('tap_postgres.db.psycopg2.connect') as mock_connect:
+            mock_connect.return_value = mock.MagicMock()
+            db.open_connection(conn_config)
+            call_kwargs = mock_connect.call_args[1]
+            self.assertEqual(call_kwargs['keepalives'], 1)
+            self.assertEqual(call_kwargs['keepalives_idle'], 120)
+            self.assertEqual(call_kwargs['keepalives_interval'], 30)
+            self.assertEqual(call_kwargs['keepalives_count'], 8)
