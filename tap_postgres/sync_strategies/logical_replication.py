@@ -572,7 +572,7 @@ def streams_to_wal2json_tables(streams):
 
 def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
     state_comitted = state
-    lsn_comitted = min([get_bookmark(state_comitted, s['tap_stream_id'], 'lsn') for s in logical_streams])
+    lsn_comitted = min(get_bookmark(state_comitted, s['tap_stream_id'], 'lsn') for s in logical_streams)
     start_lsn = lsn_comitted
     lsn_to_flush = None
     time_extracted = utils.now()
@@ -661,9 +661,7 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
                     LOGGER.info('First wal message received is %s', int_to_lsn(lsn_currently_processing))
 
                     # Flush Postgres wal up to lsn comitted in previous run, or first lsn received in this run
-                    lsn_to_flush = lsn_comitted
-                    if lsn_currently_processing < lsn_to_flush:
-                        lsn_to_flush = lsn_currently_processing
+                    lsn_to_flush = min(lsn_comitted, lsn_currently_processing)
                     LOGGER.info('Confirming write up to %s, flush to %s',
                                 int_to_lsn(lsn_to_flush),
                                 int_to_lsn(lsn_to_flush))
@@ -703,9 +701,11 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
                     finally:
                         LOGGER.info('state_comitted\n %s', state_comitted)
                         lsn_comitted = min(
-                            get_bookmark(state_comitted, s['tap_stream_id'], 'lsn', start_lsn) or start_lsn  for s in logical_streams
+                            get_bookmark(state_comitted, s['tap_stream_id'], 'lsn', start_lsn) or start_lsn
+                            for s in logical_streams
                         )
-                        LOGGER.info(f"start_lsn: {start_lsn}, lsn_currently_processing: {lsn_currently_processing}, lsn_comitted: {lsn_comitted}, lsn_to_flush: {lsn_to_flush}")
+                        LOGGER.info('start_lsn: %s, lsn_currently_processing: %s, lsn_comitted: %s, lsn_to_flush: %s',
+                                    start_lsn, lsn_currently_processing, lsn_comitted, lsn_to_flush)
                         if (lsn_currently_processing > lsn_comitted) and (lsn_comitted > lsn_to_flush):
                             lsn_to_flush = lsn_comitted
                             LOGGER.info('Confirming write up to %s, flush to %s',
@@ -732,7 +732,7 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
 
             for s in logical_streams:
                 state = singer.write_bookmark(state, s['tap_stream_id'], 'lsn', lsn_last_processed)
-            LOGGER.info(f"Final state: {state}")
+            LOGGER.info('Final state: %s', state)
 
         singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 

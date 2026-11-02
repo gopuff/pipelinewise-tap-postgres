@@ -11,7 +11,7 @@ pylint:
 	pylint --rcfile .pylintrc tap_postgres/
 
 start_db:
-	docker compose up -d
+	docker compose up -d --wait --build --force-recreate --renew-anon-volumes
 
 unit_test:
 	. ./venv/bin/activate ;\

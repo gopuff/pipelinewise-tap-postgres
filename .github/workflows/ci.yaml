@@ -9,17 +9,25 @@ on:
 
 jobs:
   lint_and_test:
-    name: Linting and Testing
+    name: Linting and Testing (PG ${{ matrix.postgres-version }}, Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: [ "3.12", "3.13" ]
+        # Every Postgres major the replication sources run in prod (pg_version_survey, 2026-11-02).
+        postgres-version: [ "14", "16", "17", "18" ]
+        python-version: [ "3.12" ]
+        include:
+          - postgres-version: "18"
+            python-version: "3.13"
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Build PG DB container
+        env:
+          PG_MAJOR: ${{ matrix.postgres-version }}
         run: make start_db
 
       - name: Set up Python ${{ matrix.python-version }}

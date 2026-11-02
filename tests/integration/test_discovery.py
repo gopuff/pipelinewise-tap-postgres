@@ -44,7 +44,7 @@ class TestStringTableWithPK(unittest.TestCase):
 
         self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
                          {(): {'table-key-properties': ['id'], 'database-name': 'postgres',
-                               'schema-name': 'public', 'is-view': False, 'row-count': 0},
+                               'schema-name': 'public', 'is-view': False, 'row-count': -1},
                           ('properties', 'character-varying_name'): {'inclusion': 'available',
                                                                      'sql-datatype': 'character varying',
                                                                      'selected-by-default': True},
@@ -100,7 +100,7 @@ class TestIntegerTable(unittest.TestCase):
 
         self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
                          {(): {'table-key-properties': [], 'database-name': 'postgres', 'schema-name': 'public',
-                               'is-view': False, 'row-count': 0},
+                               'is-view': False, 'row-count': -1},
                           ('properties', 'id'): {'inclusion': 'available', 'sql-datatype': 'integer',
                                                  'selected-by-default': True},
                           ('properties', 'size integer'): {'inclusion': 'available', 'sql-datatype': 'integer',
@@ -148,7 +148,7 @@ class TestDecimalPK(unittest.TestCase):
 
         self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
                          {(): {'table-key-properties': ['our_decimal'], 'database-name': 'postgres',
-                               'schema-name': 'public', 'is-view': False, 'row-count': 0},
+                               'schema-name': 'public', 'is-view': False, 'row-count': -1},
                           ('properties', 'our_decimal'): {'inclusion': 'automatic', 'sql-datatype': 'numeric',
                                                           'selected-by-default': True},
                           ('properties', 'our_decimal_38_4'): {'inclusion': 'available', 'sql-datatype': 'numeric',
@@ -207,7 +207,7 @@ class TestDatesTablePK(unittest.TestCase):
 
         self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
                          {(): {'table-key-properties': ['our_date'], 'database-name': 'postgres',
-                               'schema-name': 'public', 'is-view': False, 'row-count': 0},
+                               'schema-name': 'public', 'is-view': False, 'row-count': -1},
                           ('properties', 'our_date'): {'inclusion': 'automatic', 'sql-datatype': 'date',
                                                        'selected-by-default': True},
                           ('properties', 'our_ts'): {'inclusion': 'available',
@@ -258,7 +258,7 @@ class TestFloatTablePK(unittest.TestCase):
         stream_dict.get('metadata').sort(key=lambda md: md['breadcrumb'])
         self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
                          {(): {'table-key-properties': ['our_float'], 'database-name': 'postgres',
-                               'schema-name': 'public', 'is-view': False, 'row-count': 0},
+                               'schema-name': 'public', 'is-view': False, 'row-count': -1},
                           ('properties', 'our_float'): {'inclusion': 'automatic', 'sql-datatype': 'double precision',
                                                         'selected-by-default': True},
                           ('properties', 'our_real'): {'inclusion': 'available', 'sql-datatype': 'real',
@@ -298,7 +298,7 @@ class TestBoolsAndBits(unittest.TestCase):
         stream_dict.get('metadata').sort(key=lambda md: md['breadcrumb'])
         self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
                          {(): {'table-key-properties': [], 'database-name': 'postgres', 'schema-name': 'public',
-                               'is-view': False, 'row-count': 0},
+                               'is-view': False, 'row-count': -1},
                           ('properties', 'our_bool'): {'inclusion': 'available', 'sql-datatype': 'boolean',
                                                        'selected-by-default': True},
                           ('properties', 'our_bit'): {'inclusion': 'available', 'sql-datatype': 'bit',
@@ -336,7 +336,7 @@ class TestJsonTables(unittest.TestCase):
 
         self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
                          {(): {'table-key-properties': [], 'database-name': 'postgres', 'schema-name': 'public',
-                               'is-view': False, 'row-count': 0},
+                               'is-view': False, 'row-count': -1},
                           ('properties', 'our_secrets'): {'inclusion': 'available', 'sql-datatype': 'json',
                                                           'selected-by-default': True},
                           ('properties', 'our_secrets_b'): {'inclusion': 'available', 'sql-datatype': 'jsonb',
@@ -374,7 +374,7 @@ class TestUUIDTables(unittest.TestCase):
 
         self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
                          {(): {'table-key-properties': ['our_pk'], 'database-name': 'postgres', 'schema-name': 'public',
-                               'is-view': False, 'row-count': 0},
+                               'is-view': False, 'row-count': -1},
                           ('properties', 'our_pk'): {'inclusion': 'automatic', 'sql-datatype': 'uuid',
                                                      'selected-by-default': True},
                           ('properties', 'our_uuid'): {'inclusion': 'available', 'sql-datatype': 'uuid',
@@ -423,7 +423,7 @@ class TestHStoreTable(unittest.TestCase):
 
                 self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
                                  {(): {'table-key-properties': ['our_pk'], 'database-name': 'postgres',
-                                       'schema-name': 'public', 'is-view': False, 'row-count': 0},
+                                       'schema-name': 'public', 'is-view': False, 'row-count': -1},
                                   ('properties', 'our_pk'): {'inclusion': 'automatic', 'sql-datatype': 'hstore',
                                                              'selected-by-default': True},
                                   ('properties', 'our_hstore'): {'inclusion': 'available', 'sql-datatype': 'hstore',
@@ -480,7 +480,7 @@ class TestEnumTable(unittest.TestCase):
 
                 self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
                                  {(): {'table-key-properties': ['our_mood_enum_pk'], 'database-name': 'postgres',
-                                       'schema-name': 'public', 'is-view': False, 'row-count': 0},
+                                       'schema-name': 'public', 'is-view': False, 'row-count': -1},
                                   ('properties', 'our_mood_enum_pk'): {'inclusion': 'automatic',
                                                                        'sql-datatype': 'mood_enum',
                                                                        'selected-by-default': True},
@@ -524,7 +524,7 @@ class TestMoney(unittest.TestCase):
 
                 self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
                                  {(): {'table-key-properties': ['our_money_pk'], 'database-name': 'postgres',
-                                       'schema-name': 'public', 'is-view': False, 'row-count': 0},
+                                       'schema-name': 'public', 'is-view': False, 'row-count': -1},
                                   ('properties', 'our_money_pk'): {'inclusion': 'automatic', 'sql-datatype': 'money',
                                                                    'selected-by-default': True},
                                   ('properties', 'our_money'): {'inclusion': 'available', 'sql-datatype': 'money',
@@ -567,7 +567,7 @@ class TestArraysTable(unittest.TestCase):
 
                 self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
                                  {(): {'table-key-properties': ['our_int_array_pk'], 'database-name': 'postgres',
-                                       'schema-name': 'public', 'is-view': False, 'row-count': 0},
+                                       'schema-name': 'public', 'is-view': False, 'row-count': -1},
                                   ('properties', 'our_int_array_pk'): {'inclusion': 'automatic',
                                                                        'sql-datatype': 'integer[]',
                                                                        'selected-by-default': True},
@@ -622,7 +622,7 @@ class TestArraysLikeTable(unittest.TestCase):
             with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
                 self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
                                  {(): {'table-key-properties': [], 'database-name': 'postgres', 'schema-name': 'public',
-                                       'is-view': True, 'row-count': 0},
+                                       'is-view': True, 'row-count': -1},
                                   ('properties', 'our_int_array_pk'): {'inclusion': 'available',
                                                                        'sql-datatype': 'integer[]',
                                                                        'selected-by-default': True},
@@ -687,7 +687,7 @@ class TestColumnGrants(unittest.TestCase):
                                'database-name': 'postgres',
                                'schema-name': 'public',
                                'is-view': False,
-                               'row-count': 0},
+                               'row-count': -1},
                           ('properties', 'id'): {'inclusion': 'available',
                                                  'selected-by-default': True,
                                                  'sql-datatype': 'integer'}})

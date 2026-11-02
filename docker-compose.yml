@@ -1,36 +1,26 @@
-version: "3.3"
-
 services:
   db_primary:
     container_name: "primary"
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        PG_MAJOR: ${PG_MAJOR:-17}
     ports:
       - "5432:5432"
     environment:
-      - POSTGRESQL_REPLICATION_MODE=master
-      - POSTGRESQL_REPLICATION_USER=repl_user
-      - POSTGRESQL_REPLICATION_PASSWORD=repl_password
-      - POSTGRES_USER=test_user
       - POSTGRES_PASSWORD=my-secret-passwd
-      - POSTGRESQL_POSTGRES_PASSWORD=my-secret-passwd
-      - POSTGRESQL_DATABASE=tap_postgres_test
-      - ALLOW_EMPTY_PASSWORD=yes
+    command: >
+      postgres
+      -c wal_level=logical
+      -c max_wal_senders=16
+      -c max_replication_slots=16
+      -c output_plugin_libraries=wal2json
+      -c client_min_messages=error
     volumes:
-      -  ./db_setup/config:/bitnami/postgresql/conf
-
-  db_replica:
-    image: "docker.io/bitnamilegacy/postgresql:12"
-    container_name: replica
-    ports:
-      - "5433:5432"
-    depends_on:
-      - db_primary
-    environment:
-      - POSTGRESQL_REPLICATION_MODE=slave
-      - POSTGRESQL_REPLICATION_USER=repl_user
-      - POSTGRESQL_REPLICATION_PASSWORD=repl_password
-      - POSTGRESQL_MASTER_HOST=db_primary
-      - POSTGRESQL_MASTER_PORT_NUMBER=5432
-      - ALLOW_EMPTY_PASSWORD=yes
+      - ./db_setup/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30

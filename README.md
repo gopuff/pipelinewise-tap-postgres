@@ -174,7 +174,9 @@ to the tap for the next sync.
 
 2. You need to have a postgres database to run the tests and export its credentials.
 
-You can make use of the local docker compose setup to spin up a test database by running `make start_db`
+You can make use of the local docker compose setup to spin up a test database by running `make start_db`.
+It runs the official `postgres` image with wal2json; pick the major version with `PG_MAJOR` (default 17), e.g.
+`PG_MAJOR=14 make start_db`. CI runs every major our prod sources run: 14, 16, 17 and 18.
 
 Test objects will be created in the `postgres` database.
 

@@ -137,7 +137,7 @@ def _get_select_sql(params):
     SELECT {','.join(escaped_columns)}
     FROM (
         SELECT *
-        FROM {post_db.fully_qualified_table_name(schema_name, table_name)} 
+        FROM {post_db.fully_qualified_table_name(schema_name, table_name)}
         {where_statement}
         ORDER BY {replication_key} ASC {limit_statement}
     ) pg_speedup_trick;"""
