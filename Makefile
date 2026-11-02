@@ -11,7 +11,7 @@ pylint:
 	pylint --rcfile .pylintrc tap_postgres/
 
 start_db:
-	docker compose up -d
+	docker-compose up -d
 
 unit_test:
 	. ./venv/bin/activate ;\
