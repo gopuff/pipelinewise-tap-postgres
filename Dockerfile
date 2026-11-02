@@ -1,4 +1,4 @@
-FROM docker.io/bitnamilegacy/postgresql:12
+FROM docker.io/bitnami/postgresql:12
 
 USER root
 
