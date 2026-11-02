@@ -174,7 +174,7 @@ to the tap for the next sync.
 
 2. You need to have a postgres database to run the tests and export its credentials.
 
-You can make use of the local docker-compose to spin up a test database by running `make start_db`
+You can make use of the local docker compose setup to spin up a test database by running `make start_db`
 
 Test objects will be created in the `postgres` database.
 
