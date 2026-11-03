@@ -1,3 +1,18 @@
+2.1.0 (2026-11-02)
+-------------------
+First gopuff release. Covers everything on `master` since upstream 2.0.0; no code changes in this release itself.
+
+**Fixes**
+- LOG_BASED: confirming the slot no longer fails when a stream has no `lsn` bookmark yet; it falls back to the start LSN.
+- INCREMENTAL: add the missing `ORDER BY` on a stream's first sync (upstream #209).
+
+**Changes**
+- LOG_BASED: streams still in their initial full-table phase are also read from the slot in the same run (upstream PR #144).
+- LOG_BASED: log the committed state and the LSNs used when confirming the slot, and the final state.
+- INCREMENTAL: optional `limit` config to bound long-running queries (upstream #211).
+- Require Python >= 3.12; CI runs 3.12 and 3.13. `psycopg2-binary` is now `>=2.9.5`.
+- Remove the PyPI publish workflow. This fork is installed from git tags, never from PyPI.
+
 2.0.0 (2022-11-02)
 -------------------
 **Changes**
