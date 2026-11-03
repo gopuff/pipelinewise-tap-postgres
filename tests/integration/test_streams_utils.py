@@ -69,7 +69,7 @@ class TestInit(unittest.TestCase):
 				 'database-name': 'postgres',
 				 'schema-name': 'public',
 				 'is-view': False,
-				 'row-count': 0,
+				 'row-count': -1,
 				 'replication-method': 'LOG_BASED'
 				 },
 			('properties', 'character-varying_name'): {'inclusion': 'available',

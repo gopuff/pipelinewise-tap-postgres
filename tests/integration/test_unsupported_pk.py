@@ -48,7 +48,7 @@ class Unsupported(unittest.TestCase):
         stream_dict.get('metadata').sort(key=lambda md: md['breadcrumb'])
 
         self.assertEqual(metadata.to_map(stream_dict.get('metadata')),
-                         {():                                   {'is-view': False, 'table-key-properties': [], 'row-count': 0, 'schema-name': 'public', 'database-name': 'postgres'},
+                         {():                                   {'is-view': False, 'table-key-properties': [], 'row-count': -1, 'schema-name': 'public', 'database-name': 'postgres'},
                           ('properties', 'bytea_col'):          {'sql-datatype': 'bytea', 'selected-by-default': False, 'inclusion': 'unsupported'},
                           ('properties', 'bit_string_col'):     {'sql-datatype': 'bit(5)', 'selected-by-default': False, 'inclusion': 'unsupported'},
                           ('properties', 'line_col'):           {'sql-datatype': 'line', 'selected-by-default': False, 'inclusion': 'unsupported'},
