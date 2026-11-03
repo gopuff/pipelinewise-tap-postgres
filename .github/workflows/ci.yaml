@@ -14,7 +14,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Every Postgres major the replication sources run in prod (pg_version_survey, 2026-11-02).
+        # Every Postgres major our replication sources run in prod: pg_version_survey (2026-11-02) reached 61 of 62
+        # extractors; subscription-aux-service was not checked (its password is unset in the pod).
         postgres-version: [ "14", "16", "17", "18" ]
         python-version: [ "3.12" ]
         include:
