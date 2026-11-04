@@ -1,3 +1,12 @@
+2.2.0 (unreleased)
+-------------------
+**Changes**
+- LOG_BASED: when a run ends, bookmark the last wal message received instead of the one before it. A run that received
+  a single change used to leave no bookmark, so the next run re-read it and the slot never moved past it. Restarting
+  from the bookmarked lsn can only resend the last transaction, as the old bookmark could.
+- LOG_BASED: log how many wal messages a run received, the last one's lsn, the server's last `wal_end` and `end_lsn`
+  when it ends.
+
 2.1.0 (2026-11-02)
 -------------------
 First gopuff release. Covers everything on `master` since upstream 2.0.0; no code changes in this release itself.

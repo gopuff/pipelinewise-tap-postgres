@@ -1,3 +1,4 @@
+import itertools
 import json
 import unittest
 import decimal
@@ -1194,6 +1195,7 @@ class TestLogicalReplication(unittest.TestCase):
         mocked_version.return_value = 150000
 
         mocked_connect.return_value.cursor.return_value.read_message.return_value = test_message()
+        mocked_connect.return_value.cursor.return_value.wal_end = 0
 
         mocked_locate_rep_slot.return_value = 'mocked_value_for_replication_slot'
         expected_log_message = 'INFO:tap_postgres:Breaking - latest wal message ' \
@@ -1224,6 +1226,7 @@ class TestLogicalReplication(unittest.TestCase):
         mocked_select.side_effect = InterruptedError()
         mocked_version.return_value = 150000
         mocked_connect.return_value.cursor.return_value.read_message.return_value = None
+        mocked_connect.return_value.cursor.return_value.wal_end = 0
         mocked_locate_rep_slot.return_value = 'mocked_value_for_replication_slot'
 
         actual_output = logical_replication.sync_tables(self.conn_info, self.logical_streams, state, end_lsn,
@@ -1252,6 +1255,7 @@ class TestLogicalReplication(unittest.TestCase):
         mocked_version.return_value = 150000
 
         mocked_connect.return_value.cursor.return_value.read_message.return_value = test_message()
+        mocked_connect.return_value.cursor.return_value.wal_end = 0
 
         mocked_locate_rep_slot.return_value = 'mocked_value_for_replication_slot'
         actual_output = logical_replication.sync_tables(self.conn_info,
@@ -1263,3 +1267,38 @@ class TestLogicalReplication(unittest.TestCase):
         mocked_send_feedback.assert_called_with(write_lsn=test_message.data_start,
                                                 flush_lsn=test_message.data_start,
                                                 reply=True, force=True)
+
+    @patch('tap_postgres.sync_strategies.logical_replication.locate_replication_slot')
+    @patch('tap_postgres.sync_strategies.logical_replication.get_pg_version')
+    @patch('tap_postgres.sync_strategies.logical_replication.select')
+    @patch("psycopg2.connect")
+    def test_sync_tables_bookmarks_a_single_change(self,
+                                                   mocked_connect,
+                                                   mocked_select,
+                                                   mocked_version,
+                                                   mocked_locate_rep_slot):
+        """Test sync_tables bookmarks the only change of a run, which then waits for more until it times out"""
+        lsn_committed = 15
+        msg_data_start = 20
+
+        class test_message:
+            data_start = msg_data_start
+
+        state = {'bookmarks': {'foo-bar': {'foo': 'bar', 'version': 'foo', 'lsn': lsn_committed}}}
+        end_lsn = 30
+        state_file = 5
+
+        mocked_version.return_value = 150000
+        mocked_cursor = mocked_connect.return_value.cursor.return_value
+        mocked_cursor.read_message.side_effect = itertools.chain([test_message()], itertools.repeat(None))
+        mocked_cursor.wal_end = 25
+        mocked_locate_rep_slot.return_value = 'mocked_value_for_replication_slot'
+
+        with patch('tap_postgres.sync_strategies.logical_replication.consume_message',
+                   side_effect=lambda streams, state, *args: state), self.assertLogs() as captured_log:
+            actual_output = logical_replication.sync_tables(self.conn_info, self.logical_streams, state, end_lsn,
+                                                            state_file)
+
+        self.assertEqual(msg_data_start, actual_output['bookmarks']['foo-bar']['lsn'])
+        self.assertIn('INFO:tap_postgres:Received 1 wal messages, the last at 0/14; server wal_end 0/19, end_lsn 0/1E',
+                      captured_log.output)
