@@ -13,7 +13,7 @@ from dateutil.parser import parse
 
 LOGGER = singer.get_logger('tap_postgres')
 
-CURSOR_ITER_SIZE = 20000
+CURSOR_ITER_SIZE = 5000
 
 
 # pylint: disable=invalid-name,missing-function-docstring
@@ -44,7 +44,12 @@ def open_connection(conn_config, logical_replication=False, prioritize_primary=F
         'user': conn_config['user'],
         'password': conn_config['password'],
         'port': conn_config['port'],
-        'connect_timeout': 30
+        'connect_timeout': 30,
+        # TCP keepalive to prevent idle connection drops by NAT gateways / load balancers
+        'keepalives': 1,
+        'keepalives_idle': conn_config.get('keepalive_idle', 60),
+        'keepalives_interval': conn_config.get('keepalive_interval', 15),
+        'keepalives_count': conn_config.get('keepalive_count', 4),
     }
 
     if conn_config['use_secondary'] and not prioritize_primary and not logical_replication:
@@ -62,6 +67,26 @@ def open_connection(conn_config, logical_replication=False, prioritize_primary=F
         cfg['connection_factory'] = psycopg2.extras.LogicalReplicationConnection
 
     conn = psycopg2.connect(**cfg)
+
+    # Set session parameters for better performance on large queries
+    if not logical_replication:
+        work_mem = conn_config.get('work_mem')
+        if work_mem:
+            with conn.cursor() as cur:
+                cur.execute(f"SET work_mem = '{work_mem}'")
+                LOGGER.debug('Set work_mem = %s', work_mem)
+        
+        # Log diagnostics if enabled
+        if conn_config.get('diagnostic_mode'):
+            with conn.cursor() as cur:
+                cur.execute("SELECT current_setting('work_mem'), current_setting('shared_buffers'), current_setting('effective_cache_size')")
+                settings = cur.fetchone()
+                LOGGER.info("PostgreSQL settings - work_mem: %s, shared_buffers: %s, effective_cache_size: %s",
+                           settings[0], settings[1], settings[2])
+                
+                cur.execute("SELECT pg_size_pretty(pg_database_size(current_database()))")
+                db_size = cur.fetchone()[0]
+                LOGGER.info("Database size: %s", db_size)
 
     return conn
 
@@ -198,14 +223,23 @@ def selected_row_to_singer_message(stream, row, version, columns, time_extracted
         time_extracted=time_extracted)
 
 
+_hstore_cache = {}
+
+
 def hstore_available(conn_info):
+    """Check if hstore extension is available. Results are cached per database."""
+    cache_key = (conn_info.get('host'), conn_info.get('port'), conn_info.get('dbname'))
+    
+    if cache_key in _hstore_cache:
+        return _hstore_cache[cache_key]
+    
     with open_connection(conn_info) as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor, name='stitch_cursor') as cur:
             cur.execute(""" SELECT installed_version FROM pg_available_extensions WHERE name = 'hstore' """)
             res = cur.fetchone()
-            if res and res[0]:
-                return True
-            return False
+            result = bool(res and res[0])
+            _hstore_cache[cache_key] = result
+            return result
 
 
 def compute_tap_stream_id(schema_name, table_name):
