@@ -711,7 +711,7 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
                         )
                         LOGGER.info('start_lsn: %s, lsn_currently_processing: %s, lsn_comitted: %s, lsn_to_flush: %s',
                                     start_lsn, lsn_currently_processing, lsn_comitted, lsn_to_flush)
-                        if (lsn_currently_processing > lsn_comitted) and (lsn_comitted > lsn_to_flush):
+                        if (lsn_currently_processing >= lsn_comitted) and (lsn_comitted > lsn_to_flush):
                             lsn_to_flush = lsn_comitted
                             LOGGER.info('Confirming write up to %s, flush to %s',
                                         int_to_lsn(lsn_to_flush),

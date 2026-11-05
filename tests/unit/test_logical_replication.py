@@ -7,7 +7,7 @@ import singer
 import psycopg2
 
 from collections import namedtuple
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timedelta, timezone
 from unittest.mock import patch
 from dateutil.tz import tzoffset
 
@@ -1302,3 +1302,51 @@ class TestLogicalReplication(unittest.TestCase):
         self.assertEqual(msg_data_start, actual_output['bookmarks']['foo-bar']['lsn'])
         self.assertIn('INFO:tap_postgres:Received 1 wal messages, the last at 0/14; server wal_end 0/19, end_lsn 0/1E',
                       captured_log.output)
+
+    @patch('tap_postgres.sync_strategies.logical_replication.locate_replication_slot')
+    @patch('tap_postgres.sync_strategies.logical_replication.get_pg_version')
+    @patch('tap_postgres.sync_strategies.logical_replication.select')
+    @patch('tap_postgres.sync_strategies.logical_replication.datetime')
+    @patch("psycopg2.connect")
+    def test_sync_tables_flushes_the_bookmark_when_only_its_transaction_is_resent(self,
+                                                                                 mocked_connect,
+                                                                                 mocked_datetime,
+                                                                                 mocked_select,
+                                                                                 mocked_version,
+                                                                                 mocked_locate_rep_slot):
+        """Test sync_tables confirms the bookmark it started from when the only messages are the bookmarked
+        transaction sent again, so psycopg2 can confirm the server's keepalive position on a quiet database"""
+        lsn_committed = 20
+
+        class test_message:
+            def __init__(self, data_start):
+                self.data_start = data_start
+
+        clock = [datetime(2026, 11, 5)]
+
+        def utcnow():
+            clock[0] += timedelta(seconds=1)
+            return clock[0]
+
+        mocked_datetime.datetime.utcnow.side_effect = utcnow
+        mocked_datetime.timedelta = timedelta
+        state = {'bookmarks': {'foo-bar': {'foo': 'bar', 'version': 'foo', 'lsn': lsn_committed}}}
+        self.conn_info['max_run_seconds'] = 60
+        self.conn_info['logical_poll_total_seconds'] = 600
+
+        mocked_version.return_value = 150000
+        mocked_cursor = mocked_connect.return_value.cursor.return_value
+        # The bookmarked transaction's first change, then the bookmarked change itself.
+        mocked_cursor.read_message.side_effect = itertools.chain([test_message(10), test_message(lsn_committed)],
+                                                                 itertools.repeat(None))
+        mocked_cursor.wal_end = 25
+        mocked_locate_rep_slot.return_value = 'mocked_value_for_replication_slot'
+
+        with patch('tap_postgres.sync_strategies.logical_replication.consume_message',
+                   side_effect=lambda streams, state, *args: state):
+            actual_output = logical_replication.sync_tables(self.conn_info, self.logical_streams, state, 30,
+                                                            '/nonexistent/state.json')
+
+        self.assertEqual(lsn_committed, actual_output['bookmarks']['foo-bar']['lsn'])
+        mocked_cursor.send_feedback.assert_called_with(write_lsn=lsn_committed, flush_lsn=lsn_committed,
+                                                       reply=True, force=True)
