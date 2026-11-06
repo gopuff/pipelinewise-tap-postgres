@@ -580,6 +580,8 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
     lsn_last_processed = None
     lsn_currently_processing = None
     lsn_processed_count = 0
+    messages_received = 0
+    wal_end = None
     start_run_timestamp = datetime.datetime.utcnow()
     max_run_seconds = conn_info['max_run_seconds']
     break_at_end_lsn = conn_info['break_at_end_lsn']
@@ -644,6 +646,8 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
             except Exception as e:
                 LOGGER.error(e)
                 raise
+            # The server's last reported position, from a keepalive or a message; 0 until it reports one
+            wal_end = cur.wal_end
 
             if msg:
                 if (break_at_end_lsn) and (msg.data_start > end_lsn):
@@ -653,6 +657,7 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
                     break
 
                 state = consume_message(logical_streams, state, msg, time_extracted, conn_info)
+                messages_received += 1
 
                 # When using wal2json with write-in-chunks, multiple messages can have the same lsn
                 # This is to ensure we only flush to lsn that has completed entirely
@@ -706,7 +711,7 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
                         )
                         LOGGER.info('start_lsn: %s, lsn_currently_processing: %s, lsn_comitted: %s, lsn_to_flush: %s',
                                     start_lsn, lsn_currently_processing, lsn_comitted, lsn_to_flush)
-                        if (lsn_currently_processing > lsn_comitted) and (lsn_comitted > lsn_to_flush):
+                        if (lsn_currently_processing >= lsn_comitted) and (lsn_comitted > lsn_to_flush):
                             lsn_to_flush = lsn_comitted
                             LOGGER.info('Confirming write up to %s, flush to %s',
                                         int_to_lsn(lsn_to_flush),
@@ -719,19 +724,30 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
         cur.close()
         conn.close()
     finally:
-        if lsn_last_processed:
-            if lsn_comitted > lsn_last_processed:
-                lsn_last_processed = lsn_comitted
-                LOGGER.info('Current lsn_last_processed %s is older than lsn_comitted %s',
-                            int_to_lsn(lsn_last_processed),
+        LOGGER.info('Received %i wal messages, the last at %s; server wal_end %s, end_lsn %s',
+                    messages_received,
+                    int_to_lsn(lsn_currently_processing),
+                    int_to_lsn(wal_end),
+                    int_to_lsn(end_lsn))
+
+        # Bookmark the last message received, whose changes have all been written out. A run restarted from
+        # its lsn gets every transaction that commits after it again, so this never skips data; it can only
+        # resend the last transaction, as bookmarking an earlier lsn already does. Bookmarking only the
+        # message before it left a run that received a single change with no bookmark, so the slot never moved.
+        lsn_to_bookmark = lsn_currently_processing
+        if lsn_to_bookmark:
+            if lsn_comitted > lsn_to_bookmark:
+                lsn_to_bookmark = lsn_comitted
+                LOGGER.info('Current lsn_currently_processing %s is older than lsn_comitted %s',
+                            int_to_lsn(lsn_currently_processing),
                             int_to_lsn(lsn_comitted))
 
             LOGGER.info('Updating bookmarks for all streams to lsn = %s (%s)',
-                        lsn_last_processed,
-                        int_to_lsn(lsn_last_processed))
+                        lsn_to_bookmark,
+                        int_to_lsn(lsn_to_bookmark))
 
             for s in logical_streams:
-                state = singer.write_bookmark(state, s['tap_stream_id'], 'lsn', lsn_last_processed)
+                state = singer.write_bookmark(state, s['tap_stream_id'], 'lsn', lsn_to_bookmark)
             LOGGER.info('Final state: %s', state)
 
         singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
