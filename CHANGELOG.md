@@ -1,4 +1,16 @@
-2.2.0 (unreleased)
+2.3.0 (unreleased)
+-------------------
+**Changes**
+- LOG_BASED: with `break_at_end_lsn` (the default), stop once the server reports a position (`wal_end`) at or past
+  `end_lsn`, the WAL position when the run started. The server only reports a position past a commit after it has sent
+  that transaction's changes, so the run has everything committed before it started. Caught-up runs used to wait for a
+  change committed after the start, `logical_poll_total_seconds` or `max_run_seconds`. A run now ends in seconds on a
+  quiet database, and writes made during the run go to the next one.
+- LOG_BASED: when a run stops that way having received nothing past its bookmark, confirm and bookmark the server's
+  `wal_end`. The wal up to it has no changes to the selected tables, and without this the slot would keep it until one
+  of them changed, since the run no longer stays connected long enough for psycopg2 to confirm keepalive positions.
+
+2.2.0 (2026-11-06)
 -------------------
 **Changes**
 - LOG_BASED: when a run ends, bookmark the last wal message received instead of the one before it. A run that received

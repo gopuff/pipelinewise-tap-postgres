@@ -1211,6 +1211,104 @@ class TestLogicalReplication(unittest.TestCase):
     @patch('tap_postgres.sync_strategies.logical_replication.get_pg_version')
     @patch('tap_postgres.sync_strategies.logical_replication.select')
     @patch("psycopg2.connect")
+    def test_sync_tables_if_break_at_end_lsn_and_wal_end_reaches_end_lsn(self,
+                                                                         mocked_connect,
+                                                                         mocked_select,
+                                                                         mocked_version,
+                                                                         mocked_locate_rep_slot):
+        """Test sync_tables stops without waiting once the server reports a position at end_lsn, and bookmarks
+        the last change"""
+        end_lsn = 30
+        msg_data_start = 20
+
+        class test_message:
+            data_start = msg_data_start
+
+        state = {'bookmarks': {'foo-bar': {'foo': 'bar', 'version': 'foo', 'lsn': 15}}}
+        self.conn_info['break_at_end_lsn'] = True
+        state_file = 5
+
+        mocked_version.return_value = 150000
+        mocked_cursor = mocked_connect.return_value.cursor.return_value
+        mocked_cursor.read_message.side_effect = itertools.chain([test_message()], itertools.repeat(None))
+        mocked_cursor.wal_end = end_lsn
+        mocked_locate_rep_slot.return_value = 'mocked_value_for_replication_slot'
+
+        with patch('tap_postgres.sync_strategies.logical_replication.consume_message',
+                   side_effect=lambda streams, state, *args: state), self.assertLogs() as captured_log:
+            actual_output = logical_replication.sync_tables(self.conn_info, self.logical_streams, state, end_lsn,
+                                                            state_file)
+
+        self.assertIn('INFO:tap_postgres:Breaking - server wal_end 0/1E reached end_lsn 0/1E', captured_log.output)
+        self.assertEqual(msg_data_start, actual_output['bookmarks']['foo-bar']['lsn'])
+        mocked_select.assert_not_called()
+        mocked_cursor.send_feedback.assert_called_once_with(write_lsn=15, flush_lsn=15, reply=True, force=True)
+
+    @patch('tap_postgres.sync_strategies.logical_replication.locate_replication_slot')
+    @patch('tap_postgres.sync_strategies.logical_replication.get_pg_version')
+    @patch('tap_postgres.sync_strategies.logical_replication.select')
+    @patch("psycopg2.connect")
+    def test_sync_tables_confirms_and_bookmarks_wal_end_when_nothing_new_arrived(self,
+                                                                                mocked_connect,
+                                                                                mocked_select,
+                                                                                mocked_version,
+                                                                                mocked_locate_rep_slot):
+        """Test sync_tables confirms and bookmarks the server's wal_end when it stops with nothing received past
+        its bookmark, so wal for unselected tables doesn't pile up behind the slot"""
+        lsn_committed = 15
+        end_lsn = 30
+
+        state = {'bookmarks': {'foo-bar': {'foo': 'bar', 'version': 'foo', 'lsn': lsn_committed}}}
+        self.conn_info['break_at_end_lsn'] = True
+        state_file = 5
+
+        mocked_version.return_value = 150000
+        mocked_cursor = mocked_connect.return_value.cursor.return_value
+        mocked_cursor.read_message.return_value = None
+        mocked_cursor.wal_end = end_lsn
+        mocked_locate_rep_slot.return_value = 'mocked_value_for_replication_slot'
+
+        actual_output = logical_replication.sync_tables(self.conn_info, self.logical_streams, state, end_lsn,
+                                                        state_file)
+
+        mocked_cursor.send_feedback.assert_called_once_with(write_lsn=end_lsn, flush_lsn=end_lsn,
+                                                            reply=True, force=True)
+        self.assertEqual(end_lsn, actual_output['bookmarks']['foo-bar']['lsn'])
+        mocked_select.assert_not_called()
+
+    @patch('tap_postgres.sync_strategies.logical_replication.locate_replication_slot')
+    @patch('tap_postgres.sync_strategies.logical_replication.get_pg_version')
+    @patch('tap_postgres.sync_strategies.logical_replication.select')
+    @patch("psycopg2.connect")
+    def test_sync_tables_if_break_at_end_lsn_and_wal_end_before_end_lsn(self,
+                                                                        mocked_connect,
+                                                                        mocked_select,
+                                                                        mocked_version,
+                                                                        mocked_locate_rep_slot):
+        """Test sync_tables keeps waiting while the server reports a position before end_lsn"""
+        end_lsn = 30
+
+        state = {'bookmarks': {'foo-bar': {'foo': 'bar', 'version': 'foo', 'lsn': 15}}}
+        self.conn_info['break_at_end_lsn'] = True
+        state_file = 5
+
+        mocked_version.return_value = 150000
+        mocked_cursor = mocked_connect.return_value.cursor.return_value
+        mocked_cursor.read_message.return_value = None
+        mocked_cursor.wal_end = end_lsn - 1
+        mocked_locate_rep_slot.return_value = 'mocked_value_for_replication_slot'
+
+        with self.assertLogs() as captured_log:
+            logical_replication.sync_tables(self.conn_info, self.logical_streams, state, end_lsn, state_file)
+
+        self.assertFalse(any('Breaking - server wal_end' in line for line in captured_log.output))
+        self.assertTrue(any('of polling with no data' in line for line in captured_log.output))
+        mocked_select.assert_called()
+
+    @patch('tap_postgres.sync_strategies.logical_replication.locate_replication_slot')
+    @patch('tap_postgres.sync_strategies.logical_replication.get_pg_version')
+    @patch('tap_postgres.sync_strategies.logical_replication.select')
+    @patch("psycopg2.connect")
     def test_sync_tables_if_no_message_and_raised_interrupted_error(self,
                                                                     mocked_connect,
                                                                     mocked_select,
