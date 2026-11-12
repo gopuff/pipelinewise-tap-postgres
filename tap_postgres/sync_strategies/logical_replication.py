@@ -582,6 +582,7 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
     lsn_processed_count = 0
     messages_received = 0
     wal_end = None
+    lsn_caught_up = None
     start_run_timestamp = datetime.datetime.utcnow()
     max_run_seconds = conn_info['max_run_seconds']
     break_at_end_lsn = conn_info['break_at_end_lsn']
@@ -686,6 +687,24 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
                         singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
                         lsn_processed_count = 0
             else:
+                # The server only reports a position past a commit once it has decoded and sent that transaction's
+                # changes, so a wal_end at or past end_lsn means every change committed before the run started has
+                # been received. Without this a caught-up run waits for a newer change or one of its caps.
+                if break_at_end_lsn and wal_end >= end_lsn:
+                    LOGGER.info('Breaking - server wal_end %s reached end_lsn %s',
+                                int_to_lsn(wal_end),
+                                int_to_lsn(end_lsn))
+
+                    # With nothing received past the committed bookmark, the wal up to wal_end has no changes to the
+                    # selected tables. Confirm it, or the slot keeps that wal until one of those tables changes.
+                    if (lsn_currently_processing or 0) <= lsn_comitted < wal_end:
+                        lsn_caught_up = wal_end
+                        LOGGER.info('Confirming write up to %s, flush to %s',
+                                    int_to_lsn(lsn_caught_up),
+                                    int_to_lsn(lsn_caught_up))
+                        cur.send_feedback(write_lsn=lsn_caught_up, flush_lsn=lsn_caught_up, reply=True, force=True)
+                    break
+
                 try:
                     # Wait for a second unless a message arrives
                     select([cur], [], [], 1)
@@ -734,7 +753,8 @@ def sync_tables(conn_info, logical_streams, state, end_lsn, state_file):
         # its lsn gets every transaction that commits after it again, so this never skips data; it can only
         # resend the last transaction, as bookmarking an earlier lsn already does. Bookmarking only the
         # message before it left a run that received a single change with no bookmark, so the slot never moved.
-        lsn_to_bookmark = lsn_currently_processing
+        # A run that confirmed the server's wal_end bookmarks it instead, so the next run starts from the slot.
+        lsn_to_bookmark = lsn_caught_up or lsn_currently_processing
         if lsn_to_bookmark:
             if lsn_comitted > lsn_to_bookmark:
                 lsn_to_bookmark = lsn_comitted
